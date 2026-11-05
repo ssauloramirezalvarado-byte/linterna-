@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linterna Saulo</title>
+    <!-- Conexión con tu archivo manifest.json -->
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .card {
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            max-width: 340px;
+            width: 100%;
+        }
+
+        h2 {
+            margin-bottom: 10px;
+            font-size: 22px;
+        }
+
+        p {
+            color: #b0b3b8;
+            font-size: 14px;
+            line-height: 1.4;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background-color: #1877f2;
+            color: white;
+            border: none;
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 10px;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.97);
+            background-color: #145dbf;
+        }
+
+        #status {
+            margin-top: 20px;
+            font-size: 15px;
+            font-weight: bold;
+            color: #45bd62;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Linterna Saulo</h2>
+        <p>Inicia el sensor y da <strong>tres agites reales</strong> para prender o apagar la luz.</p>
+        <button id="startButton">Iniciar Sensor</button>
+        <div id="status">Estado: Detenido</div>
+    </div>
+
+    <script>
+        // Registro del service worker para la PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js')
+                    .then(reg => console.log('Service Worker listo', reg))
+                    .catch(err => console.log('Error en Service Worker', err));
+            });
+        }
+
+        let videoTrack = null;
+        let flashlightOn = false;
+        
+        // Configuración de precisión
+        const shakeThreshold = 12;      // Umbral para aceleración lineal pura (sin gravedad)
+        let shakeCount = 0;
+        let lastShakeTime = 0;
+        const shakeWindow = 1600;       // Ventana exacta de 1.6 segundos para los 3 agites
+        let actionCooldown = 0;
+
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+
+        startButton.addEventListener('click', async () => {
+            try {
+                statusDiv.style.color = "#ffa400";
+                statusDiv.innerText = "Estado: Solicitando permisos...";
+
+                if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                    const permissionResponse = await DeviceMotionEvent.requestPermission();
+                    if (permissionResponse !== 'granted') {
+                        alert("Permiso de movimiento denegado.");
+                        statusDiv.innerText = "Estado: Permiso denegado";
+                        return;
+                    }
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' }
+                });
+                videoTrack = stream.getVideoTracks()[0];
+                
+                statusDiv.style.color = "#45bd62";
+                statusDiv.innerText = "Estado: ¡Listo! Sin falsos positivos.";
+                startButton.style.display = 'none';
+
+                window.addEventListener('devicemotion', handleMotion);
+
+            } catch (error) {
+                console.error(error);
+                alert("Error al iniciar: " + error.message);
+                statusDiv.style.color = "#ff3b30";
+                statusDiv.innerText = "Estado: Error de permisos o cámara";
+            }
+        });
+
+        function handleMotion(event) {
+            // Usamos 'event.acceleration' para ignorar la inclinación y la gravedad
+            const acc = event.acceleration;
+            if (!acc || acc.x === null) return;
+
+            const currentTime = new Date().getTime();
+
+            let x = acc.x || 0;
+            let y = acc.y || 0;
+            let z = acc.z || 0;
+            let speed = Math.sqrt(x * x + y * y + z * z);
+
+            if (speed > shakeThreshold && currentTime > actionCooldown) {
+                
+                if (currentTime - lastShakeTime < shakeWindow) {
+                    shakeCount++;
+                } else {
+                    shakeCount = 1; 
+                }
+
+                lastShakeTime = currentTime;
+
+                if (shakeCount >= 3) {
+                    flashlightOn = !flashlightOn;
+                    toggleFlashlight(flashlightOn);
+                    
+                    shakeCount = 0;
+                    actionCooldown = currentTime + 2000; // Pausa de seguridad de 2s
+                } else {
+                    statusDiv.style.color = "#ffa400";
+                    statusDiv.innerText = `Estado: Movimiento ${shakeCount}/3...`;
+                }
+            }
+        }
+
+        async function toggleFlashlight(turnOn) {
+            if (!videoTrack) return;
+            try {
+                await videoTrack.applyConstraints({
+                    advanced: [{ torch: turnOn }]
+                });
+                statusDiv.style.color = turnOn ? "#45bd62" : "#b0b3b8";
+                statusDiv.innerText = turnOn ? "Estado: 🔦 ¡Linterna ENCENDIDA!" : "Estado: 🌙 Linterna apagada";
+            } catch (err) {
+                console.log("Error al activar el flash:", err);
+                statusDiv.style.color = "#ff3b30";
+                statusDiv.innerText = "Estado: El flash no es compatible";
+            }
+        }
+    </script>
+</body>
+</html>
